@@ -81,7 +81,13 @@ class GiftScanner:
     async def get_gift_types(self) -> list[Any]:
         result = await self._request(functions.payments.GetStarGiftsRequest(hash=0))
         gifts = getattr(result, "gifts", []) or []
-        return [gift for gift in gifts if isinstance(gift, types.StarGift)]
+        # Avoid relying on Telethon's abstract TL base-class export: Telegram
+        # catalogue entries are concrete constructors with id/title fields.
+        return [
+            gift for gift in gifts
+            if getattr(gift, "id", None) is not None
+            and getattr(gift, "title", None)
+        ]
 
     async def _fetch_page(self, gift_id: int, *, sort_by_price: bool, offset: str = ""):
         return await self._request(
