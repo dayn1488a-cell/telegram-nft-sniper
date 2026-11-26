@@ -25,6 +25,28 @@ def _price_in_stars(gift: Any) -> float | None:
     return min(values) if values else None
 
 
+def _json_value(value: Any) -> Any:
+    """Convert Telegram's JSONValue TL constructors into native Python values."""
+    if value is None:
+        return None
+    if isinstance(value, types.JsonNull):
+        return None
+    if isinstance(value, types.JsonNumber):
+        return value.value
+    if isinstance(value, types.JsonString):
+        return value.value
+    if isinstance(value, types.JsonBool):
+        return value.value
+    if isinstance(value, types.JsonArray):
+        return [_json_value(item) for item in value.value]
+    if isinstance(value, types.JsonObject):
+        return {
+            item.key: _json_value(item.value)
+            for item in value.value
+        }
+    return None
+
+
 class GiftScanner:
     def __init__(self, client, settings):
         self.client = client
@@ -41,13 +63,17 @@ class GiftScanner:
             return await self.client(request)
 
     async def _resale_commission_permille(self) -> int | None:
-        """Read Telegram's current resale commission; fail closed if unavailable."""
+        """Read the current resale commission from Telegram's app configuration."""
         try:
-            config = await self._request(functions.help.GetConfigRequest())
-            value = getattr(config, "stars_stargift_resale_commission_permille", None)
-            if value is None or not 0 <= int(value) < 1000:
+            response = await self._request(functions.help.GetAppConfigRequest(hash=0))
+            config = _json_value(getattr(response, "config", None))
+            value = config.get("stars_stargift_resale_commission_permille") if isinstance(config, dict) else None
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
                 return None
-            return int(value)
+            commission = int(value)
+            if not 0 <= commission < 1000:
+                return None
+            return commission
         except Exception:
             log.exception("Could not read Telegram resale commission; profit screening disabled")
             return None
@@ -57,22 +83,26 @@ class GiftScanner:
         gifts = getattr(result, "gifts", []) or []
         return [gift for gift in gifts if isinstance(gift, types.StarGift)]
 
+    async def _fetch_page(self, gift_id: int, *, sort_by_price: bool, offset: str = ""):
+        return await self._request(
+            functions.payments.GetResaleStarGiftsRequest(
+                sort_by_price=sort_by_price,
+                stars_only=True,
+                gift_id=gift_id,
+                attributes=[],
+                offset=offset,
+                limit=self.settings.page_size,
+            )
+        )
+
     async def scan_gift_type(self, gift_type: Any) -> list[dict[str, Any]]:
         found: list[dict[str, Any]] = []
-        offset = ""
         gift_id = int(gift_type.id)
+        offset = ""
 
+        # Fetch cheapest listings first, with bounded pagination.
         for _ in range(self.settings.max_pages_per_gift):
-            result = await self._request(
-                functions.payments.GetResaleStarGiftsRequest(
-                    sort_by_price=True,
-                    stars_only=True,
-                    gift_id=gift_id,
-                    attributes=[],
-                    offset=offset,
-                    limit=self.settings.page_size,
-                )
-            )
+            result = await self._fetch_page(gift_id, sort_by_price=True, offset=offset)
             for item in getattr(result, "gifts", []) or []:
                 price = _price_in_stars(item)
                 if price is None:
@@ -94,6 +124,23 @@ class GiftScanner:
             offset = next_offset
             await asyncio.sleep(self.settings.request_pause_seconds)
 
+        # Fetch a separate recent-price sample. Telegram documents that omitting
+        # sort_by_price sorts by most recently changed resale price.
+        recent = await self._fetch_page(gift_id, sort_by_price=False)
+        recent_prices = [
+            price for item in (getattr(recent, "gifts", []) or [])
+            if (price := _price_in_stars(item)) is not None
+        ]
+        if len(recent_prices) >= 5:
+            reference_price = median(recent_prices)
+            for listing in found:
+                listing["market_reference_stars"] = reference_price
+                listing["reference_sample_size"] = len(recent_prices)
+        else:
+            for listing in found:
+                listing["market_reference_stars"] = None
+                listing["reference_sample_size"] = len(recent_prices)
+
         return found
 
     def _screen_for_profit(
@@ -103,23 +150,18 @@ class GiftScanner:
             log.warning("Profit screening skipped: Telegram commission is unavailable")
             return
 
-        by_type: dict[int, list[dict[str, Any]]] = defaultdict(list)
-        for listing in listings:
-            by_type[listing["gift_id"]].append(listing)
-
         candidates: list[Candidate] = []
-        for same_type in by_type.values():
-            # Median of the observed official-market asks is only a rough proxy,
-            # not a completed-sale price. Use it conservatively and keep paper-only.
-            reference_price = median(x["price_stars"] for x in same_type)
-            for listing in same_type:
-                candidates.append(Candidate(
-                    slug=listing["slug"],
-                    gift_type=listing["gift_type"],
-                    asking_price_stars=listing["price_stars"],
-                    conservative_market_price_stars=reference_price,
-                    resale_commission_permille=commission_permille,
-                ))
+        for listing in listings:
+            reference = listing.get("market_reference_stars")
+            if reference is None or listing.get("reference_sample_size", 0) < 5:
+                continue
+            candidates.append(Candidate(
+                slug=listing["slug"],
+                gift_type=listing["gift_type"],
+                asking_price_stars=listing["price_stars"],
+                conservative_market_price_stars=reference,
+                resale_commission_permille=commission_permille,
+            ))
 
         selected = choose_candidates(candidates, self.strategy)
         if not selected:
@@ -129,9 +171,11 @@ class GiftScanner:
         for item in selected:
             log.warning(
                 "PAPER BUY CANDIDATE (NO PURCHASE): %s — ask %.2f Stars; "
-                "estimated net resale %.2f; estimated profit %.2f Stars (ROI %.1f%%); %s",
+                "recent listing median %.2f; estimated net resale %.2f; "
+                "estimated profit %.2f Stars (ROI %.1f%%); %s",
                 item.candidate.gift_type,
                 item.candidate.asking_price_stars,
+                item.candidate.conservative_market_price_stars,
                 item.estimated_net_resale_stars,
                 item.estimated_profit_stars,
                 item.estimated_roi_percent,
