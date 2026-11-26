@@ -1,12 +1,24 @@
 # Telegram NFT Gift Scanner
 
-A read-only scanner for Telegram's official collectible-gift resale marketplace. It uses Telegram's MTProto API through Telethon and checks listings by gift type. It does not buy, sell, transfer, or otherwise spend Stars.
+A read-only scanner for Telegram's official collectible-gift resale marketplace. It uses Telegram's MTProto API through Telethon. It does not buy, sell, transfer, or otherwise spend Stars.
+
+## Agreed starter-budget policy
+
+The screening policy is configured for a 400-Star starting balance:
+
+- Target: at least 2 collectible gifts.
+- Maximum purchase price per gift: 200 Stars.
+- Maximum total budget: 400 Stars.
+- A candidate must show at least 15% estimated ROI after the configured resale commission.
+- If fewer than 2 candidates pass, the scanner keeps the unused Stars; it must never buy a weak listing just to reach the target.
+
+The policy lives in `src/strategy.py`. It is a screening/paper-trading component only. It does not submit Telegram payments. Market estimates must be conservative and commission data must come from Telegram's current configuration; asking prices alone are not proof of market value.
 
 ## Current scope
 
 - Reads the official Telegram gift catalogue and resale listings.
 - Requests Stars-only listings, sorted by ascending price.
-- Logs listings at or below `MAX_ALERT_PRICE_STARS` as filter matches. This is only a price filter, not a claim that an item is profitable or underpriced.
+- Logs low-price listings as filter matches; a low price alone is not a profit signal.
 - Uses conservative request pacing and handles Telegram flood-wait responses.
 - Stores the Telegram login session locally under `data/`; never commit that folder or share the session file.
 
@@ -31,10 +43,12 @@ A read-only scanner for Telegram's official collectible-gift resale marketplace.
 - Telegram may apply rate limits or change API layers; `FLOOD_WAIT` pauses are respected, but repeated requests can still be restricted.
 - The scanner checks only the configured number of pages per gift type, so it is not an exhaustive market snapshot.
 - A low listing price does not guarantee resale demand, profit, or a successful resale. Fees, resale commission, listing restrictions, and price movement matter.
-- The app currently has no automated buying or selling code. Keep it that way until a separate, explicit trading policy is agreed and tested.
+- Automated purchases and sales are deliberately disabled. The agreed budget limits are not permission for the code to bypass profitability checks or spend Stars during this read-only stage.
 - For reliable cloud operation, authentication/session persistence and Railway storage must be configured securely before deployment.
 
 ## Official Telegram API references
 
 - https://core.telegram.org/api/gifts
 - https://core.telegram.org/method/payments.getResaleStarGifts
+- https://core.telegram.org/constructor/starGiftUnique
+- https://core.telegram.org/api/config
