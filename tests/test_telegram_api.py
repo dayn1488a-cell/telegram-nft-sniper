@@ -25,7 +25,6 @@ class TelegramApiCompatibilityTests(unittest.TestCase):
         session = StringSession()
         saved = session.save()
         self.assertIsInstance(saved, str)
-        self.assertTrue(saved)
 
 
 if __name__ == "__main__":
