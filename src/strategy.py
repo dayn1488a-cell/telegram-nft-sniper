@@ -41,12 +41,14 @@ def evaluate(candidate: Candidate, strategy: Strategy = Strategy()) -> Evaluatio
 
     if not candidate.slug or price <= 0 or market <= 0:
         return None
-    if commission < 0 or commission >= 1000:
+    if commission <= 0 or commission > 1000:
         return None
     if price > strategy.max_per_gift_stars or price > strategy.budget_stars:
         return None
 
-    net_resale = market * (1000 - commission) / 1000
+    # Telegram's config value is the share the seller RECEIVES, not the fee
+    # deducted. E.g. 800 permille means seller receives 80% of resale price.
+    net_resale = market * commission / 1000
     profit = net_resale - price
     roi = profit / price * 100
     if profit <= 0 or roi < strategy.min_profit_percent:
