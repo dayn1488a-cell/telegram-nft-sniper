@@ -19,7 +19,7 @@ The policy lives in `src/strategy.py`. It is a screening/paper-trading component
 - Fetches the cheapest Stars listings with bounded pagination.
 - Separately fetches a sample sorted by most recently changed resale price.
 - Uses the median asking price from that recent sample as a rough reference, and requires at least five observations.
-- Reads the resale commission from Telegram's current app configuration.
+- Reads Telegram's current resale commission from app configuration; the value is the seller's payout share (for example, 800 permille means 80% of the resale price is paid to the seller).
 - Fails closed: if the commission or reference sample is unavailable, no profit candidate is produced.
 
 **Important:** this is a listing-based estimate, not completed-sale data. It cannot prove that a gift will sell at the reference price, or that a profit will be realized. Before any real purchase feature is considered, the estimator must be validated against observed price history, liquidity, fees, and actual resale outcomes.
