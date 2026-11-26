@@ -1,0 +1,15 @@
+# Secrets and local credentials
+.env
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime data and logs
+data/
+logs/
+*.log
