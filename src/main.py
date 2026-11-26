@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.sessions import StringSession
 
 from .config import load_settings
@@ -55,7 +55,13 @@ async def run() -> None:
         log.info("Connected. Read-only mode is active; no purchases or sales are implemented.")
         scanner = GiftScanner(client, settings)
         while True:
-            await scanner.scan_once()
+            try:
+                await scanner.scan_once()
+            except FloodWaitError as exc:
+                wait_seconds = max(30, int(getattr(exc, "seconds", 0)) + 5)
+                log.warning("Telegram rate limit reached; pausing scanner for %d seconds", wait_seconds)
+                await asyncio.sleep(wait_seconds)
+                continue
             log.info("Next scan in at least %d seconds", settings.scan_interval_seconds)
             await asyncio.sleep(settings.scan_interval_seconds)
     finally:
